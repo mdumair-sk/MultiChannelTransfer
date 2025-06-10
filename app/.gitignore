@@ -1,0 +1,14 @@
+# Android Studio
+.idea/
+*.iml
+.gradle/
+build/
+local.properties
+.DS_Store
+.cxx/
+
+# Keystore
+*.jks
+
+# OS files
+Thumbs.db
