@@ -1,6 +1,6 @@
 # MultiChannelTransfer 🚀
 
-A Java/Kotlin-based multi-channel file transfer tool—built with Gradle—that supports parallel TCP/UDP channels for efficient and reliable data transfers.
+A Java/Kotlin-based multi-channel file transfer tool—built with Gradle—that supports parallel TCP/UDP channels for efficient and reliable data transfers. (WIP)
 
 ## 🧩 Overview
 
