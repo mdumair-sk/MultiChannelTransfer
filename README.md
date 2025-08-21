@@ -1,132 +1,171 @@
 # MultiChannelTransfer 🚀
 
-A Java/Kotlin-based multi-channel file transfer tool—built with Gradle—that supports parallel TCP/UDP channels for efficient and reliable data transfers. (WIP)
+![GitHub last commit](https://img.shields.io/github/last-commit/mdumair-sk/MultiChannelTransfer)
+![GitHub](https://img.shields.io/github/license/mdumair-sk/MultiChannelTransfer)
 
-## 🧩 Overview
+**MultiChannelTransfer** is a full-stack, multi-channel file-transfer suite:
 
-This project implements multi-channel file transfer using:
+| Platform | Tech | Channels | Protocols |
+|----------|------|----------|-----------|
+| **Android** | Kotlin + Material 3 | USB (ADB port-forward) & Wi-Fi | Persistent TCP |
+| **Desktop** | Java / Kotlin CLI | configurable parallel sockets | TCP stop-and-wait<br>UDP selective-repeat |
+| **Python Server** | Python 3 | auto-detect single-chunk / multi-chunk | TCP with checksums, re-assembly, progress |
 
-- **TCP Stop-and-Wait** for guaranteed data delivery.
-- **UDP Selective Repeat** for high-throughput transfers with packet loss recovery.
-- Parallel streams to leverage multiple channels and optimize speed.
+> Status · WIP — core transfer works; polishing UI, error handling, and tests.
 
-## 📂 Repo Structure
+---
+
+## ✨ Key Features
+
+* Parallel **USB + Wi-Fi** transfer on Android (persistent sockets, load-balanced chunks)
+* Modern **Material 3 UI** with dark-mode, progress indicator, and live log
+* Python receiver: auto-assembles chunks, verifies SHA-256, logs speed & ETA
+* CLI desktop tools supporting multi-socket TCP or UDP for LAN transfers
+* Pluggable **load-balancer** (round-robin, size-aware, future: throughput-aware)
+* Cross-platform — works Windows, Linux, macOS, Android
+
+---
+
+## 🗂 Repo Structure
 
 ```
-
 MultiChannelTransfer/
 │
-├── app/                    # Core application code (Java/Kotlin)
-├── gradle/                 # Gradle build scripts
-├── build.gradle.kts        # Gradle configuration
-├── settings.gradle.kts     # Settings for module inclusion
-└── README.md               # You're here!
+├── android/                 # Android Studio module (app/)
+│   └── app/
+│       ├── src/main/java/…  # Kotlin source
+│       └── src/main/res/…   # Material 3 UI
+│
+├── desktop/                 # JVM CLI client / server (Kotlin + JDK 11)
+│   └── src/
+│
+├── python-server/           # Stand-alone Python 3 receiver
+│   └── file_transfer_server.py
+│
+├── gradle/                  # Wrapper & scripts (root builds desktop module)
+├── build.gradle.kts
+├── settings.gradle.kts
+└── README.md                # ← you are here
+```
 
-````
-
-## ⚙️ Prerequisites
-
-- Java JDK 11+ or Kotlin-compatible JDK  
-- Gradle (wrapper included, e.g. run via `./gradlew`)  
-- TCP/UDP network environment (local machine or LAN)
+---
 
 ## 🚀 Getting Started
 
-### Build the project
+### 1. Clone & Build
 
-Clone and build:
-
-```bash
+```
 git clone https://github.com/mdumair-sk/MultiChannelTransfer.git
 cd MultiChannelTransfer
-./gradlew build
-````
 
-### Usage
-
-#### Server (Receiver)
-
-```bash
-./gradlew run --args="--mode server --port 9000 --channels 4"
+# Build desktop CLI tools
+./gradlew :desktop:build
 ```
 
-#### Client (Sender)
+### 2. Run the Python Server (receiver)
 
-```bash
-./gradlew run --args="--mode client \
-  --server-host 192.168.1.5 \
-  --port 9000 \
-  --channels 4 \
-  --file path/to/file.dat"
+```
+cd python-server
+python3 file_transfer_server.py \
+  --host 0.0.0.0 --port 8765    # default values
+
+# Logs appear in transfer_server.log, files in received_files/
 ```
 
-### Options
+### 3. Install & Run the Android App (sender)
 
-| Flag            | Description                                 |
-| --------------- | ------------------------------------------- |
-| `--mode`        | `server` or `client`                        |
-| `--port`        | Port number for communication               |
-| `--channels`    | Number of parallel channels                 |
-| `--file`        | Path to file (for client mode)              |
-| `--server-host` | IP/Hostname of the server (for client mode) |
+1. Open **android/** in Android Studio Flamingo or newer.  
+2. Build & deploy to your device (`Run ► app`).  
+3. The UI lets you  
+   * select a file  
+   * enter PC IP (the server above)  
+   * choose chunk size  
+   * press **Start Transfer**
 
-## ⚙️ Architecture & Workflow
+> The app opens one USB socket (via `adb reverse`) **and** one Wi-Fi socket, then streams chunks concurrently.
 
-1. **Handshake** – Client and server agree on mode, channels, file metadata.
-2. **Channel setup** – Multiple TCP and UDP sockets opened.
-3. **Transfer**
+### 4. (Optional) Use Desktop CLI Sender/Receiver
 
-   * **TCP**: Stop-and-wait ensuring ordered, reliable chunks
-   * **UDP**: Segmented and tracked with sequence numbers; missing packets trigger retransmission
-4. **Reassembly** – Server reconstructs file from received chunks.
+Server:
+
+```
+./gradlew :desktop:run --args="--mode server --port 9000 --channels 4"
+```
+
+Client:
+
+```
+./gradlew :desktop:run --args="--mode client \
+  --server-host 192.168.1.5 --port 9000 --channels 4 --file path/to/file.dat"
+```
+
+---
+
+## ⚙️ Android Architecture
+
+```
+MainActivity ─► FileChunkingService ─► LoadBalancer ─► TransferService
+                 ▲                                   │
+                 └──────────────────────── USB / Wi-Fi sockets (persistent)
+```
+
+* **TransferService** keeps one long-lived `Socket` per channel, streams chunks, posts progress via callbacks.  
+* **LinearProgressIndicator** shows overall %, plus per-chunk updates in the log pane.  
+* **Material theme**: `Theme.MaterialComponents.DayNight.DarkActionBar`.
+
+---
+
+## ⚙️ Python Server Highlights
+
+* Auto-detects legacy “one-connection-per-chunk” vs new “multi-chunk persistent” protocol.  
+* Writes each chunk to `received_files/<file>_chunks/`; assembles once all are present.  
+* SHA-256 checksum optional.  
+* Logs per-chunk speed + final statistics.
+
+---
+
+## 🛠 Configuration
+
+| Component | File / flag | Purpose |
+|-----------|-------------|---------|
+| Android   | `DEFAULT_PC_IP` in `MainActivity.kt` | default receiver IP |
+| Desktop   | `--channels`                         | parallel sockets    |
+| Python    | `MAX_CONNECTIONS`                    | concurrent clients  |
+
+---
 
 ## 📈 Performance Tips
 
-* Match `--channels` to CPU + network capabilities.
-* Use UDP on stable LANs for best speed; fallback to TCP in unreliable networks.
-
-## 🧪 Tests
-
-Add more scenarios:
-
-* Concurrent client transfers
-* Simulating packet loss
-* Large-file performance comparisons
-
-## 📦 Future Enhancements
-
-* **Checksum validation** (e.g., MD5/SHA-256)
-* **TLS encryption**
-* **GUI interface**
-* **Compression before transmission**
-
-## 📚 References
-
-* Selective Repeat ARQ protocol
-* Stop-and-Wait TCP behavior
-* Socket programming best practices
+* **Chunk size**: 256–512 KB works well on USB 2/Wi-Fi ac.  
+* USB often provides >30 MB/s on device-to-PC ADB; Wi-Fi adds bandwidth in parallel.  
+* On unstable networks, set channels = 1 or switch to pure TCP CLI tooling.
 
 ---
 
-## 🚀 Getting Started
+## 🧪 Roadmap / TODO
 
-To start using the project:
-
-1. Clone the repo
-2. Build it (`./gradlew build`)
-3. Run a server instance
-4. Send files from a client using multiple channels
-
----
-
-### 👋 Contributions Welcome!
-
-Feel free to open issues, send PRs, or suggest features. For major changes, please open an issue first to discuss.
+- [ ] TLS (OpenSSL on Python, Conscrypt on Android)  
+- [ ] Automatic chunk-size tuning  
+- [ ] Compression toggle (LZ4)  
+- [ ] Background service + notification progress on Android  
+- [ ] Cross-platform GUI (Compose Multiplatform)
 
 ---
 
-### 📄 License
+## 🤝 Contributing
 
-This project is licensed under the [MIT License](LICENSE).
+Pull requests are welcome! Please:
+
+1. Fork → feature branch → PR  
+2. Follow **Kotlin & Google Java style**  
+3. Include unit / instrumentation tests where possible
 
 ---
+
+## 📜 License
+
+`MultiChannelTransfer` is distributed under the **MIT License**. See [`LICENSE`](LICENSE) for details.
+
+***
+
+Feel free to tweak section order, rename modules, or drop the desktop part if you’re focusing solely on Android + Python.
