@@ -1,85 +1,74 @@
-package com.neo.multichanneltransfer.services;
+package com.neo.multichanneltransfer.services
 
-import android.content.Context;
-import android.net.Uri;
-import android.util.Log;
+import android.content.Context
+import android.net.Uri
+import android.util.Log
+import com.neo.multichanneltransfer.models.FileChunk
+import com.neo.multichanneltransfer.models.ChunkStatus
+import com.neo.multichanneltransfer.models.ConnectionType
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.InputStream
+import java.security.MessageDigest
 
-import com.neo.multichanneltransfer.models.FileChunk;
+class FileChunkingService(private val context: Context) {
 
-import java.io.InputStream;
-import java.security.MessageDigest;
-import java.util.ArrayList;
-
-public class FileChunkingService {
-    private static final int DEFAULT_CHUNK_SIZE = 512 * 1024; // 512KB
-    private final Context context;
-
-    public FileChunkingService(Context context) {
-        this.context = context;
+    companion object {
+        const val DEFAULT_CHUNK_SIZE_BYTES = 512 * 1024 // 512 KB
+        private const val TAG = "FileChunkingService"
     }
 
-    public interface ProgressCallback {
-        void onProgressUpdate(int percent);
+    suspend fun chunkFile(
+        fileUri: Uri,
+        fileName: String,
+        chunkSize: Int = DEFAULT_CHUNK_SIZE_BYTES,
+        progressCallback: ((Int) -> Unit)? = null
+    ): List<FileChunk> = withContext(Dispatchers.IO) {
+        val chunks = mutableListOf<FileChunk>()
+
+        context.contentResolver.openInputStream(fileUri)?.use { inputStream ->
+            val totalSize = inputStream.available().toLong()
+            var bytesReadTotal = 0L
+            var chunkIndex = 0
+
+            val buffer = ByteArray(chunkSize)
+            var readBytes: Int
+
+            while (inputStream.read(buffer).also { readBytes = it } != -1) {
+                val chunkData = buffer.copyOf(readBytes)
+                val chunkId = "${fileName}_chunk_$chunkIndex"
+                val checksum = calculateChecksum(chunkData)
+
+                val chunk = FileChunk(
+                    chunkId = chunkId,
+                    chunkIndex = chunkIndex,
+                    sizeBytes = readBytes,
+                    data = chunkData,
+                    checksum = checksum,
+                    status = ChunkStatus.PENDING,
+                    assignedChannel = null
+                )
+
+                chunks.add(chunk)
+                chunkIndex++
+
+                bytesReadTotal += readBytes
+                val progressPercent = ((bytesReadTotal * 100) / totalSize).toInt()
+                progressCallback?.invoke(progressPercent)
+            }
+        } ?: throw IllegalArgumentException("Unable to open file input stream for URI: $fileUri")
+
+        chunks
     }
 
-    public ArrayList<FileChunk> chunkFile(Uri fileUri, String fileName, ProgressCallback callback) throws Exception {
-        ArrayList<FileChunk> chunks = new ArrayList<>();
-
-        try (InputStream inputStream = context.getContentResolver().openInputStream(fileUri)) {
-            if (inputStream == null) {
-                throw new Exception("Cannot open file");
-            }
-
-            long totalSize = inputStream.available();
-            byte[] buffer = new byte[DEFAULT_CHUNK_SIZE];
-            int chunkIndex = 0;
-            int bytesRead;
-            long bytesProcessed = 0;
-
-            while ((bytesRead = inputStream.read(buffer)) != -1) {
-                byte[] chunkData = new byte[bytesRead];
-                System.arraycopy(buffer, 0, chunkData, 0, bytesRead);
-
-                String chunkId = fileName + "_chunk_" + chunkIndex;
-                FileChunk chunk = new FileChunk(chunkId, chunkIndex, bytesRead);
-                chunk.setData(chunkData);
-                chunk.setChecksum(calculateChecksum(chunkData));
-
-                chunks.add(chunk);
-                chunkIndex++;
-
-                bytesProcessed += bytesRead;
-                if (callback != null && totalSize > 0) {
-                    int percent = (int) ((bytesProcessed * 100) / totalSize);
-                    callback.onProgressUpdate(percent);
-                }
-            }
-        } catch (Exception e) {
-            Log.e("FileChunkingService", "Error chunking file", e);
-            throw e;
-        }
-
-        return chunks;
-    }
-
-    private String calculateChecksum(byte[] data) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(data);
-            StringBuilder hexString = new StringBuilder();
-
-            for (byte b : hash) {
-                String hex = Integer.toHexString(0xff & b);
-                if (hex.length() == 1) {
-                    hexString.append('0');
-                }
-                hexString.append(hex);
-            }
-
-            return hexString.toString();
-        } catch (Exception e) {
-            Log.e("FileChunkingService", "Checksum error", e);
-            return "";
+    private fun calculateChecksum(data: ByteArray): String {
+        return try {
+            val digest = MessageDigest.getInstance("SHA-256")
+            val hash = digest.digest(data)
+            hash.joinToString("") { "%02x".format(it) }
+        } catch (e: Exception) {
+            Log.e(TAG, "Checksum calculation failed", e)
+            ""
         }
     }
 }

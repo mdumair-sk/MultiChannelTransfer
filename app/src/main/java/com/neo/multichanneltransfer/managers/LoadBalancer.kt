@@ -1,138 +1,104 @@
-package com.neo.multichanneltransfer.managers;
+package com.neo.multichanneltransfer.managers
 
-import com.neo.multichanneltransfer.models.FileChunk;
-import com.neo.multichanneltransfer.models.ConnectionInfo;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Queue;
-import java.util.LinkedList;
+import com.neo.multichanneltransfer.models.ConnectionInfo
+import com.neo.multichanneltransfer.models.ConnectionType
+import com.neo.multichanneltransfer.models.FileChunk
+import java.util.*
+import kotlin.collections.ArrayList
 
-public class LoadBalancer {
-    private HashMap<String, Queue<FileChunk>> channelQueues;
-    private HashMap<String, Double> channelSpeeds;
+class LoadBalancer {
 
-    // Initial allocation percentages
-    private static final double USB_INITIAL_ALLOCATION = 0.65; // 65%
-    private static final double WIFI_INITIAL_ALLOCATION = 0.35; // 35%
+    private val channelQueues: MutableMap<ConnectionType, Queue<FileChunk>> = EnumMap(ConnectionType::class.java)
+    private val channelSpeeds: MutableMap<ConnectionType, Double> = EnumMap(ConnectionType::class.java)
 
-    public LoadBalancer() {
-        this.channelQueues = new HashMap<>();
-        this.channelSpeeds = new HashMap<>();
-
-        // Initialize queues
-        channelQueues.put("usb", new LinkedList<>());
-        channelQueues.put("wifi", new LinkedList<>());
-
-        // Initialize expected speeds (MB/s)
-        channelSpeeds.put("usb", 35.0);
-        channelSpeeds.put("wifi", 20.0);
+    companion object {
+        private const val USB_INITIAL_ALLOCATION = 0.65
+        private const val WIFI_INITIAL_ALLOCATION = 0.35
+        private const val SPEED_DIFF_THRESHOLD = 0.15 // 15%
     }
 
-    public void distributeChunks(ArrayList<FileChunk> chunks, HashMap<String, ConnectionInfo> connections) {
-        // Get available connections
-        ArrayList<String> availableChannels = new ArrayList<>();
-        for (String channel : connections.keySet()) {
-            ConnectionInfo conn = connections.get(channel);
-            if (conn.isActive() && conn.isConnected()) {
-                availableChannels.add(channel);
-            }
-        }
+    init {
+        channelQueues[ConnectionType.USB] = LinkedList()
+        channelQueues[ConnectionType.WIFI] = LinkedList()
 
-        if (availableChannels.isEmpty()) {
-            return; // No connections available
-        }
-
-        // Clear existing queues
-        for (Queue<FileChunk> queue : channelQueues.values()) {
-            queue.clear();
-        }
-
-        // Initial distribution based on expected performance
-        int totalChunks = chunks.size();
-        int usbChunks = (int) (totalChunks * USB_INITIAL_ALLOCATION);
-        int wifiChunks = totalChunks - usbChunks;
-
-        // Distribute chunks
-        for (int i = 0; i < chunks.size(); i++) {
-            FileChunk chunk = chunks.get(i);
-
-            if (i < usbChunks && availableChannels.contains("usb")) {
-                chunk.setAssignedChannel("usb");
-                channelQueues.get("usb").offer(chunk);
-            } else if (availableChannels.contains("wifi")) {
-                chunk.setAssignedChannel("wifi");
-                channelQueues.get("wifi").offer(chunk);
-            } else if (availableChannels.contains("usb")) {
-                // Fallback to USB if WiFi not available
-                chunk.setAssignedChannel("usb");
-                channelQueues.get("usb").offer(chunk);
-            }
-        }
+        channelSpeeds[ConnectionType.USB] = 35.0
+        channelSpeeds[ConnectionType.WIFI] = 20.0
     }
 
-    public void rebalanceChunks(HashMap<String, ConnectionInfo> connections) {
-        // Update channel speeds based on current performance
-        for (String channel : connections.keySet()) {
-            ConnectionInfo conn = connections.get(channel);
-            if (conn.isActive() && conn.isConnected()) {
-                channelSpeeds.put(channel, conn.getCurrentSpeed());
-            }
-        }
+    fun distributeChunks(chunks: List<FileChunk>, connections: Map<ConnectionType, ConnectionInfo>) {
+        val availableChannels = connections.filterValues { it.isActive && it.isConnected }.keys.toList()
 
-        // Find the fastest and slowest channels
-        String fastestChannel = null;
-        String slowestChannel = null;
-        double maxSpeed = 0;
-        double minSpeed = Double.MAX_VALUE;
+        if (availableChannels.isEmpty()) return
 
-        for (String channel : channelSpeeds.keySet()) {
-            if (connections.get(channel).isActive()) {
-                double speed = channelSpeeds.get(channel);
-                if (speed > maxSpeed) {
-                    maxSpeed = speed;
-                    fastestChannel = channel;
+        // Clear old queues
+        channelQueues.values.forEach { it.clear() }
+
+        val totalChunks = chunks.size
+        val usbChunksCount = (totalChunks * USB_INITIAL_ALLOCATION).toInt()
+        val wifiChunksCount = totalChunks - usbChunksCount
+
+        chunks.forEachIndexed { i, chunk ->
+            when {
+                i < usbChunksCount && availableChannels.contains(ConnectionType.USB) -> {
+                    chunk.assignedChannel = ConnectionType.USB
+                    channelQueues[ConnectionType.USB]?.offer(chunk)
                 }
-                if (speed < minSpeed) {
-                    minSpeed = speed;
-                    slowestChannel = channel;
+                availableChannels.contains(ConnectionType.WIFI) -> {
+                    chunk.assignedChannel = ConnectionType.WIFI
+                    channelQueues[ConnectionType.WIFI]?.offer(chunk)
+                }
+                availableChannels.contains(ConnectionType.USB) -> {
+                    chunk.assignedChannel = ConnectionType.USB
+                    channelQueues[ConnectionType.USB]?.offer(chunk)
                 }
             }
         }
+    }
 
-        // Rebalance if there's significant speed difference (>15%)
-        if (fastestChannel != null && slowestChannel != null &&
-                !fastestChannel.equals(slowestChannel)) {
+    fun rebalanceChunks(connections: Map<ConnectionType, ConnectionInfo>) {
+        connections.forEach { (channel, conn) ->
+            if (conn.isActive && conn.isConnected) {
+                channelSpeeds[channel] = conn.currentSpeedMbps
+            }
+        }
 
-            double speedDifference = (maxSpeed - minSpeed) / minSpeed;
-            if (speedDifference > 0.15) { // 15% threshold
-                rebalanceQueues(fastestChannel, slowestChannel);
+        val activeSpeeds = channelSpeeds.filterKeys { key ->
+            connections[key]?.isActive == true
+        }
+
+        if (activeSpeeds.size < 2) return
+
+        val (fastestChannel, maxSpeed) = activeSpeeds.maxByOrNull { it.value } ?: return
+        val (slowestChannel, minSpeed) = activeSpeeds.minByOrNull { it.value } ?: return
+
+        if (fastestChannel == slowestChannel) return
+
+        val speedDifference = (maxSpeed - minSpeed) / minSpeed
+        if (speedDifference <= SPEED_DIFF_THRESHOLD) return
+
+        rebalanceQueues(fastestChannel, slowestChannel)
+    }
+
+    private fun rebalanceQueues(fastChannel: ConnectionType, slowChannel: ConnectionType) {
+        val slowQueue = channelQueues[slowChannel] ?: return
+        val fastQueue = channelQueues[fastChannel] ?: return
+
+        val chunksToMove = minOf(slowQueue.size / 4, 10)
+
+        repeat(chunksToMove) {
+            val chunk = slowQueue.poll()
+            if (chunk != null && chunk.status == com.neo.multichanneltransfer.models.ChunkStatus.PENDING) {
+                chunk.assignedChannel = fastChannel
+                fastQueue.offer(chunk)
             }
         }
     }
 
-    private void rebalanceQueues(String fastChannel, String slowChannel) {
-        Queue<FileChunk> slowQueue = channelQueues.get(slowChannel);
-        Queue<FileChunk> fastQueue = channelQueues.get(fastChannel);
-
-        // Move some chunks from slow to fast channel
-        int chunksToMove = Math.min(slowQueue.size() / 4, 10); // Move up to 25% or 10 chunks
-
-        for (int i = 0; i < chunksToMove; i++) {
-            FileChunk chunk = slowQueue.poll();
-            if (chunk != null && "pending".equals(chunk.getStatus())) {
-                chunk.setAssignedChannel(fastChannel);
-                fastQueue.offer(chunk);
-            }
-        }
+    fun getNextChunk(channel: ConnectionType): FileChunk? {
+        return channelQueues[channel]?.poll()
     }
 
-    public FileChunk getNextChunk(String channel) {
-        Queue<FileChunk> queue = channelQueues.get(channel);
-        return queue != null ? queue.poll() : null;
-    }
-
-    public int getRemainingChunks(String channel) {
-        Queue<FileChunk> queue = channelQueues.get(channel);
-        return queue != null ? queue.size() : 0;
+    fun getRemainingChunks(channel: ConnectionType): Int {
+        return channelQueues[channel]?.size ?: 0
     }
 }

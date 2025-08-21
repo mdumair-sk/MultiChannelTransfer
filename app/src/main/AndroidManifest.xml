@@ -2,7 +2,25 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- File/media permissions (Android 13+, and compatibility for older versions) -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+
+    <!-- Network permissions -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <!-- USB permissions and feature -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+
+    <!-- For requesting USB permission at runtime (custom intent) is not a system permission -->
+    <!-- android.permission.USB_PERMISSION is not recognized; you only *broadcast* and listen for this. -->
+    <!-- Remove from uses-permission, keep only in the receiver intent-filter. -->
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -12,23 +30,26 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.MultiChannelTransfer"
-        tools:targetApi="31">
-        <service
-            android:name=".FileChunkingService"
-            android:enabled="true"
-            android:exported="true"></service>
+        tools:targetApi="34">
 
+        <!-- App main launcher -->
         <activity
             android:name=".MainActivity"
-            android:exported="true"
-            android:label="@string/app_name"
-            android:theme="@style/Theme.MultiChannelTransfer">
+            android:exported="true">
             <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-
-                <category android:name="android.intent.category.LAUNCHER" />
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-    </application>
 
+        <!-- USB permission receiver for runtime handling -->
+        <receiver
+            android:name=".usbPermissionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.neo.multichanneltransfer.USB_PERMISSION"/>
+            </intent-filter>
+        </receiver>
+
+    </application>
 </manifest>

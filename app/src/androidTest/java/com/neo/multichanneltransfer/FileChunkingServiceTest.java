@@ -5,12 +5,10 @@ import android.net.Uri;
 import androidx.test.core.app.ApplicationProvider;
 
 import com.neo.multichanneltransfer.models.FileChunk;
-import com.neo.multichanneltransfer.services.FileChunkingService;
 
 import org.junit.Before;
 import org.junit.Test;
 
-import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.util.ArrayList;
